@@ -114,12 +114,30 @@ func (c *Client) discoverCharacteristics() error {
 		return errors.New("not all characteristics found")
 	}
 
-	c.commandChar = chars[0]
-	c.notifyChar = chars[1]
-	c.eqChar = chars[2]
-	c.keyFuncChar = chars[3]
-	c.batteryChar = chars[4]
-	c.versionChar = chars[5]
+	byUUID := make(map[bluetooth.UUID]bluetooth.DeviceCharacteristic, len(chars))
+	for _, char := range chars {
+		byUUID[char.UUID()] = char
+	}
+
+	var ok bool
+	if c.commandChar, ok = byUUID[constant.CommandUUID]; !ok {
+		return errors.New("command characteristic not found")
+	}
+	if c.notifyChar, ok = byUUID[constant.NotifyUUID]; !ok {
+		return errors.New("notification characteristic not found")
+	}
+	if c.eqChar, ok = byUUID[constant.EQUUID]; !ok {
+		return errors.New("EQ characteristic not found")
+	}
+	if c.keyFuncChar, ok = byUUID[constant.KeyFuncUUID]; !ok {
+		return errors.New("key function characteristic not found")
+	}
+	if c.batteryChar, ok = byUUID[constant.BatteryUUID]; !ok {
+		return errors.New("battery characteristic not found")
+	}
+	if c.versionChar, ok = byUUID[constant.VersionUUID]; !ok {
+		return errors.New("version characteristic not found")
+	}
 
 	return nil
 }

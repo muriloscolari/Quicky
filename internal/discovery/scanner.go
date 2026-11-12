@@ -7,10 +7,10 @@ import (
 )
 
 type ScanResult struct {
-	Address         bluetooth.Address
-	RSSI            int16
-	Name            string
-	Advertisement   *utils.AdvertisementInfo
+	Address       bluetooth.Address
+	RSSI          int16
+	Name          string
+	Advertisement *utils.AdvertisementInfo
 }
 
 type Scanner struct {
@@ -22,6 +22,10 @@ func NewScanner(adapter *bluetooth.Adapter) *Scanner {
 }
 
 func (s *Scanner) Scan(callback func(ScanResult)) error {
+	if err := s.adapter.Enable(); err != nil {
+		return err
+	}
+
 	return s.adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
 		for _, mfr := range result.ManufacturerData() {
 			if mfr.CompanyID != constant.QCYCompanyID {

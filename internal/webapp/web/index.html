@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101715">
+  <title>QuiCkY Control</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="QuiCkY Control">
+      <span class="brand-mark">Q</span>
+      <span><strong>QuiCkY</strong><small>Linux earbud console</small></span>
+    </a>
+    <div class="system-status">
+      <span id="statusDot" class="status-dot"></span>
+      <span id="systemStatus">Bluetooth aguardando</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">BLE / GATT CONTROL PANEL</p>
+        <h1>Seu QCY,<br><em>sem o celular.</em></h1>
+      </div>
+      <p class="hero-copy">Controle recursos internos do fone diretamente pelo BlueZ. A conexão de áudio continua sendo administrada pelo Linux.</p>
+    </section>
+
+    <section id="discovery" class="panel discovery-panel">
+      <div class="section-heading">
+        <div>
+          <span class="step">01</span>
+          <div>
+            <p class="kicker">DESCOBERTA</p>
+            <h2>Fones próximos</h2>
+          </div>
+        </div>
+        <button id="scanButton" class="button button-primary" type="button">
+          <span class="scan-icon" aria-hidden="true"></span>
+          <span>Procurar QCY</span>
+        </button>
+      </div>
+
+      <div id="scanHint" class="hint">
+        Retire os dois fones do estojo e desligue temporariamente o Bluetooth do celular.
+      </div>
+      <div id="deviceList" class="device-list" aria-live="polite">
+        <div class="empty-state">
+          <div class="radar" aria-hidden="true"><i></i></div>
+          <strong>Nenhuma busca realizada</strong>
+          <span>Os dispositivos QCY encontrados aparecerão aqui.</span>
+        </div>
+      </div>
+
+      <form id="manualForm" class="manual-connect">
+        <label for="manualAddress">Conectar por MAC</label>
+        <div>
+          <input id="manualAddress" name="address" inputmode="text" autocomplete="off" placeholder="AA:BB:CC:DD:EE:FF" maxlength="17">
+          <button class="button button-secondary" type="submit">Conectar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="dashboard" class="dashboard" hidden>
+      <div class="section-heading dashboard-heading">
+        <div>
+          <span class="step">02</span>
+          <div>
+            <p class="kicker">DISPOSITIVO ATIVO</p>
+            <h2 id="deviceTitle">QCY</h2>
+            <p id="deviceMeta" class="device-meta"></p>
+          </div>
+        </div>
+        <div class="heading-actions">
+          <button id="refreshButton" class="icon-button" type="button" title="Atualizar bateria" aria-label="Atualizar bateria">↻</button>
+          <button id="disconnectButton" class="button button-danger" type="button">Desconectar</button>
+        </div>
+      </div>
+
+      <div class="battery-grid" aria-label="Níveis de bateria">
+        <article class="battery-card">
+          <span>ESQUERDO</span>
+          <strong id="batteryLeft">--</strong>
+          <div class="battery-track"><i id="batteryLeftBar"></i></div>
+          <small id="batteryLeftState">sem leitura</small>
+        </article>
+        <article class="battery-card">
+          <span>DIREITO</span>
+          <strong id="batteryRight">--</strong>
+          <div class="battery-track"><i id="batteryRightBar"></i></div>
+          <small id="batteryRightState">sem leitura</small>
+        </article>
+        <article class="battery-card case-card">
+          <span>ESTOJO</span>
+          <strong id="batteryCase">--</strong>
+          <div class="battery-track"><i id="batteryCaseBar"></i></div>
+          <small id="batteryCaseState">sem leitura</small>
+        </article>
+      </div>
+
+      <div id="featureNotice" class="feature-notice"></div>
+
+      <div class="control-grid">
+        <article class="control-card control-card-wide">
+          <div class="control-title">
+            <div><span class="control-number">A</span><h3>Ambiente</h3></div>
+            <small id="ancSupport">compatibilidade a confirmar</small>
+          </div>
+          <div class="segmented" id="ancControls" role="group" aria-label="Cancelamento de ruído">
+            <button type="button" data-mode="off">Normal</button>
+            <button type="button" data-mode="anc">ANC</button>
+            <button type="button" data-mode="transparency">Transparência</button>
+            <button type="button" data-mode="outdoor">Exterior</button>
+          </div>
+        </article>
+
+        <article class="control-card">
+          <div class="control-title"><div><span class="control-number">B</span><h3>Recursos</h3></div></div>
+          <div class="switch-list">
+            <label><span><strong>Modo jogo</strong><small>Baixa latência</small></span><input type="checkbox" data-toggle="low_latency"><i></i></label>
+            <label><span><strong>Detecção no ouvido</strong><small>Pausa automática</small></span><input type="checkbox" data-toggle="in_ear"><i></i></label>
+            <label><span><strong>Áudio espacial</strong><small>Se suportado</small></span><input type="checkbox" data-toggle="spatial_audio"><i></i></label>
+            <label><span><strong>LDAC</strong><small>Requer suporte do Linux</small></span><input type="checkbox" data-toggle="ldac"><i></i></label>
+            <label><span><strong>Modo sono</strong><small>Reduz interrupções</small></span><input type="checkbox" data-toggle="sleep"><i></i></label>
+          </div>
+        </article>
+
+        <article class="control-card">
+          <div class="control-title"><div><span class="control-number">C</span><h3>Níveis</h3></div></div>
+          <div class="range-control">
+            <div><label for="leftVolume">Volume esquerdo</label><output id="leftVolumeOutput">80</output></div>
+            <input id="leftVolume" type="range" min="0" max="100" value="80">
+          </div>
+          <div class="range-control">
+            <div><label for="rightVolume">Volume direito</label><output id="rightVolumeOutput">80</output></div>
+            <input id="rightVolume" type="range" min="0" max="100" value="80">
+          </div>
+          <button id="applyVolume" class="button button-secondary button-full" type="button">Aplicar volume</button>
+          <div class="range-control divided">
+            <div><label for="balance">Balanço L / R</label><output id="balanceOutput">Centro</output></div>
+            <input id="balance" type="range" min="0" max="100" value="50">
+          </div>
+          <div class="range-control">
+            <div><label for="toneVolume">Volume dos avisos</label><output id="toneVolumeOutput">60</output></div>
+            <input id="toneVolume" type="range" min="0" max="100" value="60">
+          </div>
+        </article>
+
+        <article class="control-card identity-card">
+          <div class="control-title"><div><span class="control-number">D</span><h3>Identidade</h3></div></div>
+          <p>Altere o nome anunciado pelo fone. Alguns firmwares exigem reconexão.</p>
+          <form id="renameForm">
+            <label for="deviceName">Nome do dispositivo</label>
+            <input id="deviceName" maxlength="32" placeholder="Meu QCY">
+            <button class="button button-secondary button-full" type="submit">Renomear</button>
+          </form>
+          <dl class="firmware">
+            <div><dt>Firmware L</dt><dd id="firmwareLeft">--</dd></div>
+            <div><dt>Firmware R</dt><dd id="firmwareRight">--</dd></div>
+            <div><dt>Controle BLE</dt><dd id="connectedAddress">--</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
