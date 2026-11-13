@@ -14,6 +14,58 @@ go get github.com/hui1601/Quicky
 
 Requires BlueZ on Linux.
 
+## KDE Plasma 6 Plasmoid & Daemon (`feat/kde-plasmoid`)
+
+This branch adds a **KDE Plasma 6 widget (Plasmoid)** in dark mode (Breeze Dark / Kirigami) to monitor battery levels (Left, Right, Case) and switch **ANC / Transparency / Normal** modes (including scenes and intensity levels on supported models such as the **QCY MeloBuds Pro**) directly from your Plasma panel or System Tray.
+
+The Go backend runs as a `systemd --user` background daemon on `127.0.0.1:47892` (a high, rarely used local port) so it does not conflict with other local web services.
+
+### Requirements
+
+- KDE Plasma 6 (`plasmashell` 6.x, `kpackagetool6`)
+- `systemd --user`
+- Go 1.23.1 or newer
+- BlueZ running on Linux with a BLE-capable Bluetooth adapter
+
+### Quick Install
+
+Run the installer script (or the `Makefile` target):
+
+```bash
+make install-kde
+# or:
+./scripts/install-kde.sh
+```
+
+What this does:
+1. Builds `bin/quicky-control` and installs it to `~/.local/bin/quicky-control`.
+2. Installs and enables `~/.config/systemd/user/quicky-daemon.service` running `quicky-control daemon -addr 127.0.0.1:47892`.
+3. Installs (or upgrades) the Plasmoid `me.muriloscolari.quicky` via `kpackagetool6`.
+
+### Using the Plasmoid
+
+1. Right-click your KDE Plasma panel (or desktop) and select **Add or Manage Widgets...**
+2. Search for **QuiCkY QCY** and add it to the panel or System Tray.
+3. Click the widget icon to open the popup:
+   - If disconnected, click **Procurar QCY** and connect to your earbuds.
+   - Once connected, view Left / Right / Case battery percentages and switch ANC modes, scenes, and intensity levels.
+4. Right-click the widget → **Configure QuiCkY QCY...** if you want to customize the daemon URL or polling interval.
+
+### Managing the Daemon
+
+```bash
+systemctl --user status quicky-daemon.service
+systemctl --user restart quicky-daemon.service
+systemctl --user stop quicky-daemon.service
+journalctl --user -u quicky-daemon.service -f
+```
+
+If you only want to run the daemon manually in the foreground:
+
+```bash
+./bin/quicky-control daemon
+```
+
 ## Web Control Panel
 
 This repository includes a local web interface for discovering and controlling
