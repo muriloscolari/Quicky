@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"github.com/hui1601/Quicky/internal/product"
+	quicky "github.com/hui1601/Quicky/lib"
 )
 
 func TestStatusWithoutBluetooth(t *testing.T) {
@@ -65,5 +68,53 @@ func TestShutdownRequiresControlToken(t *testing.T) {
 	case <-server.ShutdownRequested():
 	default:
 		t.Fatal("shutdown channel was not closed")
+	}
+}
+
+func TestResolveANCCmdIDForMeloBudsProAndLegacy(t *testing.T) {
+	meloBudsPro, ok := product.Lookup(19786)
+	if !ok {
+		t.Fatal("expected QCY MeloBuds Pro (19786) in product database")
+	}
+
+	cases := []struct {
+		name string
+		prod *quicky.Product
+		req  controlRequest
+		want int
+	}{
+		{name: "melobuds anc", prod: meloBudsPro, req: controlRequest{Mode: "anc"}, want: 65794},
+		{name: "melobuds transparency", prod: meloBudsPro, req: controlRequest{Mode: "transparency"}, want: 196868},
+		{name: "melobuds off", prod: meloBudsPro, req: controlRequest{Mode: "off"}, want: 131072},
+		{name: "legacy off", prod: nil, req: controlRequest{Mode: "off"}, want: int(quicky.NoiseCancelOff)},
+		{name: "legacy anc", prod: nil, req: controlRequest{Mode: "anc"}, want: int(quicky.NoiseCancelANC)},
+	}
+
+	for _, tc := range cases {
+		got, err := resolveANCCmdID(tc.prod, tc.req)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: got %d, want %d", tc.name, got, tc.want)
+		}
+	}
+
+	explicit := 66816
+	got, err := resolveANCCmdID(meloBudsPro, controlRequest{CmdID: &explicit})
+	if err != nil || got != explicit {
+		t.Fatalf("explicit cmdId: got (%d, %v), want (%d, nil)", got, err, explicit)
+	}
+}
+
+func TestBatteryFromAdvertisement(t *testing.T) {
+	got := batteryFromAdvertisement(&scannedDevice{
+		LeftBattery:  82,
+		RightBattery: 81,
+		CaseBattery:  0,
+		LeftCharging: true,
+	})
+	if got == nil || got.Left != 82 || got.Right != 81 || got.Case != 0 || !got.LeftCharging {
+		t.Fatalf("unexpected battery fallback: %+v", got)
 	}
 }

@@ -12,14 +12,22 @@ const elements = {
   dashboard: $("#dashboard"),
   deviceTitle: $("#deviceTitle"),
   deviceMeta: $("#deviceMeta"),
+  connectedAddress: $("#connectedAddress"),
+  deviceName: $("#deviceName"),
+  firmwareLeft: $("#firmwareLeft"),
+  firmwareRight: $("#firmwareRight"),
   refreshButton: $("#refreshButton"),
   disconnectButton: $("#disconnectButton"),
   featureNotice: $("#featureNotice"),
   ancSupport: $("#ancSupport"),
+  ancControls: $("#ancControls"),
+  ancSubControls: $("#ancSubControls"),
+  ancLevelControl: $("#ancLevelControl"),
   toast: $("#toast"),
 };
 
 let currentStatus = null;
+let selectedANCCmdID = null;
 let toastTimer = null;
 
 async function api(path, options = {}) {
@@ -122,10 +130,20 @@ function renderConnection(connection) {
   elements.deviceTitle.textContent = productName(device);
   elements.deviceMeta.textContent = `${connection.address} · conectado ${new Date(connection.since).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
   elements.connectedAddress.textContent = connection.address || "--";
-  elements.deviceName.value = device?.product?.title || device?.name || "";
+  if (document.activeElement !== elements.deviceName) {
+    elements.deviceName.value = device?.product?.title || device?.name || "";
+  }
   elements.firmwareLeft.textContent = connection.firmware?.left || "--";
   elements.firmwareRight.textContent = connection.firmware?.right || "--";
-  renderBattery(connection.battery);
+  const battery = connection.battery || (device ? {
+    left: device.leftBattery,
+    right: device.rightBattery,
+    case: device.caseBattery,
+    leftCharging: device.leftCharging,
+    rightCharging: device.rightCharging,
+    caseCharging: device.caseCharging,
+  } : null);
+  renderBattery(battery);
 
   const hasKnownProduct = Boolean(device?.product);
   const hasANC = Boolean(device?.product?.features?.anc);
@@ -133,6 +151,130 @@ function renderConnection(connection) {
   elements.featureNotice.textContent = hasKnownProduct
     ? `Modelo identificado na base QCY. Envie somente recursos que seu firmware suporta; um comando aceito pelo Linux ainda pode ser ignorado pelo fone.`
     : `Modelo não identificado na base. Os controles permanecem disponíveis para diagnóstico, mas podem não produzir efeito.`;
+  renderANCControls(device, connection.anc);
+}
+
+const ancLabelMap = {
+  "Noise canceling": "ANC",
+  "Transparency": "Transparência",
+  "Normal": "Normal",
+  "Off": "Normal",
+  "Outdoor": "Exterior",
+  "Adaptive Noise Cancellation": "Adaptativo",
+  "Indoor": "Interno",
+  "Commuting": "Transporte",
+  "Noisy": "Ruidoso",
+  "Anti-wind noise": "Anti-vento",
+};
+
+function ancLabel(name) {
+  return ancLabelMap[name] || name;
+}
+
+function cmdInRange(cmdId, start, end) {
+  return Number.isFinite(cmdId) && cmdId >= start && cmdId <= (end || start);
+}
+
+async function sendANC(cmdId, modeKey) {
+  const payload = Number.isFinite(cmdId)
+    ? { action: "anc", cmdId }
+    : { action: "anc", mode: modeKey };
+  const ok = await control(payload, "Modo de ambiente enviado.");
+  if (ok) {
+    if (Number.isFinite(cmdId)) selectedANCCmdID = cmdId;
+    await updateStatus();
+  }
+  return ok;
+}
+
+function renderANCControls(device, ancState) {
+  const modes = device?.product?.features?.anc?.modes;
+  if (Number.isFinite(ancState?.cmdId)) {
+    selectedANCCmdID = ancState.cmdId;
+  }
+
+  if (!modes || modes.length === 0) {
+    elements.ancSubControls.hidden = true;
+    elements.ancSubControls.innerHTML = "";
+    elements.ancLevelControl.hidden = true;
+    elements.ancLevelControl.innerHTML = "";
+    const fallbackModes = [
+      { mode: "off", label: "Normal" },
+      { mode: "anc", label: "ANC" },
+      { mode: "transparency", label: "Transparência" },
+      { mode: "outdoor", label: "Exterior" },
+    ];
+    elements.ancControls.innerHTML = fallbackModes.map((item) => `
+      <button type="button" data-mode="${item.mode}">${item.label}</button>
+    `).join("");
+    $$("#ancControls button").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const ok = await sendANC(null, button.dataset.mode);
+        if (ok) {
+          $$("#ancControls button").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+        }
+      });
+    });
+    return;
+  }
+
+  let activeMode = modes.find((m) =>
+    cmdInRange(selectedANCCmdID, m.startcmdid, m.endcmdid) ||
+    (m.items || []).some((it) => cmdInRange(selectedANCCmdID, it.startcmdid, it.endcmdid))
+  );
+
+  elements.ancControls.innerHTML = modes.map((mode, index) => {
+    const cmdId = mode.defaultcmd || mode.startcmdid;
+    const isActive = activeMode === mode;
+    return `<button type="button" data-cmd-id="${cmdId}" data-mode-index="${index}" class="${isActive ? "active" : ""}">${escapeHTML(ancLabel(mode.name))}</button>`;
+  }).join("");
+
+  $$("#ancControls button").forEach((button) => {
+    button.addEventListener("click", () => {
+      sendANC(Number(button.dataset.cmdId));
+    });
+  });
+
+  const items = activeMode?.items || [];
+  let activeItem = null;
+  if (items.length > 0) {
+    activeItem = items.find((it) => cmdInRange(selectedANCCmdID, it.startcmdid, it.endcmdid)) || items[0];
+    elements.ancSubControls.hidden = false;
+    elements.ancSubControls.innerHTML = items.map((item) => {
+      const cmdId = item.startcmdid;
+      const isActive = activeItem === item;
+      return `<button type="button" data-cmd-id="${cmdId}" class="${isActive ? "active" : ""}">${escapeHTML(ancLabel(item.name))}</button>`;
+    }).join("");
+    $$("#ancSubControls button").forEach((button) => {
+      button.addEventListener("click", () => {
+        sendANC(Number(button.dataset.cmdId));
+      });
+    });
+  } else {
+    elements.ancSubControls.hidden = true;
+    elements.ancSubControls.innerHTML = "";
+  }
+
+  const rangeSource = activeItem || activeMode;
+  if (rangeSource && rangeSource.endcmdid > rangeSource.startcmdid && (rangeSource.endcmdid - rangeSource.startcmdid) <= 10) {
+    const count = rangeSource.endcmdid - rangeSource.startcmdid + 1;
+    const levels = Array.from({ length: count }, (_, idx) => {
+      const cmdId = rangeSource.startcmdid + idx;
+      const isActive = selectedANCCmdID === cmdId;
+      return `<button type="button" data-cmd-id="${cmdId}" class="${isActive ? "active" : ""}">${idx + 1}</button>`;
+    }).join("");
+    elements.ancLevelControl.hidden = false;
+    elements.ancLevelControl.innerHTML = `<span>Intensidade</span>${levels}`;
+    $$("#ancLevelControl button").forEach((button) => {
+      button.addEventListener("click", () => {
+        sendANC(Number(button.dataset.cmdId));
+      });
+    });
+  } else {
+    elements.ancLevelControl.hidden = true;
+    elements.ancLevelControl.innerHTML = "";
+  }
 }
 
 function renderBattery(battery) {
@@ -216,6 +358,7 @@ elements.manualForm.addEventListener("submit", (event) => {
 elements.disconnectButton.addEventListener("click", async () => {
   try {
     await api("/api/disconnect", { method: "POST", body: "{}" });
+    selectedANCCmdID = null;
     $$('[data-toggle]').forEach((input) => { input.checked = false; });
     $$("#ancControls button").forEach((button) => button.classList.remove("active"));
     await updateStatus();
@@ -236,16 +379,6 @@ elements.refreshButton.addEventListener("click", async () => {
   } finally {
     elements.refreshButton.disabled = false;
   }
-});
-
-$$("#ancControls button").forEach((button) => {
-  button.addEventListener("click", async () => {
-    const ok = await control({ action: "anc", mode: button.dataset.mode }, "Modo de ambiente enviado.");
-    if (ok) {
-      $$("#ancControls button").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-    }
-  });
 });
 
 $$('[data-toggle]').forEach((input) => {

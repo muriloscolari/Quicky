@@ -54,12 +54,17 @@ type firmwareState struct {
 	Right string `json:"right"`
 }
 
+type ancState struct {
+	CmdID int `json:"cmdId"`
+}
+
 type connectionState struct {
 	Connected        bool           `json:"connected"`
 	Address          string         `json:"address,omitempty"`
 	Device           *scannedDevice `json:"device,omitempty"`
 	Battery          *batteryState  `json:"battery,omitempty"`
 	Firmware         *firmwareState `json:"firmware,omitempty"`
+	ANC              *ancState      `json:"anc,omitempty"`
 	AudioAddress     string         `json:"audioAddress,omitempty"`
 	AudioReconnected bool           `json:"audioReconnected,omitempty"`
 	Warning          string         `json:"warning,omitempty"`
@@ -96,6 +101,7 @@ type connectRequest struct {
 type controlRequest struct {
 	Action  string `json:"action"`
 	Mode    string `json:"mode,omitempty"`
+	CmdID   *int   `json:"cmdId,omitempty"`
 	Enabled *bool  `json:"enabled,omitempty"`
 	Left    *int   `json:"left,omitempty"`
 	Right   *int   `json:"right,omitempty"`
@@ -162,7 +168,10 @@ func (a *appState) routes(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/refresh", a.handleRefresh)
 	mux.HandleFunc("POST /api/control", a.handleControl)
 	mux.HandleFunc("POST /api/shutdown", a.handleShutdown)
-	mux.Handle("/", static)
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		static.ServeHTTP(w, r)
+	}))
 	return mux
 }
 
@@ -343,12 +352,6 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 			AudioAddress: audioAddress,
 			Since:        time.Now(),
 		}
-		if battery, readErr := client.ReadBattery(); readErr == nil {
-			connection.Battery = batteryResponse(battery)
-		}
-		if version, readErr := client.ReadVersion(); readErr == nil {
-			connection.Firmware = &firmwareState{Left: version.Left, Right: version.Right}
-		}
 		if audioWasConnected {
 			if reconnectErr := bluez.ConnectDevice(audioAddress); reconnectErr != nil {
 				connection.Warning = "controle conectado, mas não foi possível restaurar o áudio: " + reconnectErr.Error()
@@ -356,12 +359,21 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 				connection.AudioReconnected = true
 			}
 		}
+		if battery, readErr := readBatteryWithRetry(client, 3, 250*time.Millisecond); readErr == nil {
+			connection.Battery = batteryResponse(battery)
+		} else if discoveredDevice != nil {
+			connection.Battery = batteryFromAdvertisement(discoveredDevice)
+		}
+		if version, readErr := readVersionWithRetry(client, 2, 200*time.Millisecond); readErr == nil {
+			connection.Firmware = &firmwareState{Left: version.Left, Right: version.Right}
+		}
 
 		a.mu.Lock()
 		a.client = client
 		a.connection = connection
 		a.lastError = ""
 		a.mu.Unlock()
+		go a.listenEvents(client)
 		writeJSON(w, http.StatusOK, connection)
 		return
 	}
@@ -429,17 +441,21 @@ func (a *appState) handleControl(w http.ResponseWriter, r *http.Request) {
 
 	switch request.Action {
 	case "anc":
-		modes := map[string]quicky.NoiseCancelMode{
-			"off":          quicky.NoiseCancelOff,
-			"anc":          quicky.NoiseCancelANC,
-			"outdoor":      quicky.NoiseCancelOutdoor,
-			"transparency": quicky.NoiseCancelTransparency,
+		a.mu.RLock()
+		var prod *quicky.Product
+		if a.connection.Device != nil {
+			prod = a.connection.Device.Product
 		}
-		mode, ok := modes[request.Mode]
-		if !ok {
-			err = errors.New("modo ANC inválido")
-		} else {
-			err = client.SetNoiseCancelMode(mode)
+		a.mu.RUnlock()
+
+		var cmdID int
+		cmdID, err = sendANCCommand(client, prod, request)
+		if err == nil {
+			a.mu.Lock()
+			if a.client == client {
+				a.connection.ANC = &ancState{CmdID: cmdID}
+			}
+			a.mu.Unlock()
 		}
 	case "low_latency":
 		err = withBool(request.Enabled, client.SetLowLatency)
@@ -539,6 +555,143 @@ func batteryResponse(battery quicky.Battery) *batteryState {
 		RightCharging: battery.Right.Charging,
 		CaseCharging:  battery.Case.Charging,
 	}
+}
+
+func batteryFromAdvertisement(device *scannedDevice) *batteryState {
+	if device == nil {
+		return nil
+	}
+	return &batteryState{
+		Left:          device.LeftBattery,
+		Right:         device.RightBattery,
+		Case:          device.CaseBattery,
+		LeftCharging:  device.LeftCharging,
+		RightCharging: device.RightCharging,
+		CaseCharging:  device.CaseCharging,
+	}
+}
+
+func readBatteryWithRetry(client *quicky.Client, attempts int, delay time.Duration) (quicky.Battery, error) {
+	var err error
+	var battery quicky.Battery
+	for i := 0; i < attempts; i++ {
+		battery, err = client.ReadBattery()
+		if err == nil {
+			return battery, nil
+		}
+		if i+1 < attempts {
+			time.Sleep(delay)
+		}
+	}
+	return battery, err
+}
+
+func readVersionWithRetry(client *quicky.Client, attempts int, delay time.Duration) (quicky.Version, error) {
+	var err error
+	var version quicky.Version
+	for i := 0; i < attempts; i++ {
+		version, err = client.ReadVersion()
+		if err == nil {
+			return version, nil
+		}
+		if i+1 < attempts {
+			time.Sleep(delay)
+		}
+	}
+	return version, err
+}
+
+func (a *appState) listenEvents(client *quicky.Client) {
+	for ev := range client.Events() {
+		a.mu.Lock()
+		if a.client != client {
+			a.mu.Unlock()
+			return
+		}
+		switch ev.Type {
+		case quicky.EventBattery:
+			if battery, ok := ev.Parsed.(quicky.Battery); ok {
+				a.connection.Battery = batteryResponse(battery)
+			}
+		case quicky.EventANCSetting:
+			if anc, ok := ev.Parsed.(quicky.ANCSetting); ok {
+				cmdID := (int(anc.Mode) << 16) | (int(anc.SubScene) << 8) | int(anc.NoiseValue)
+				a.connection.ANC = &ancState{CmdID: cmdID}
+			}
+		case quicky.EventNoiseCancelMode:
+			if mode, ok := ev.Parsed.(byte); ok {
+				a.connection.ANC = &ancState{CmdID: int(mode)}
+			}
+		}
+		a.mu.Unlock()
+	}
+}
+
+func resolveANCCmdID(prod *quicky.Product, request controlRequest) (int, error) {
+	if request.CmdID != nil {
+		if *request.CmdID < 0 || *request.CmdID > 0xFFFFFF {
+			return 0, errors.New("cmdId ANC inválido")
+		}
+		return *request.CmdID, nil
+	}
+
+	if prod != nil && prod.Features.ANC != nil {
+		for _, mode := range prod.Features.ANC.Modes {
+			if matchesANCModeName(mode.Name, request.Mode) {
+				if mode.DefaultCmd > 0 {
+					return mode.DefaultCmd, nil
+				}
+				return mode.StartCmdID, nil
+			}
+			for _, item := range mode.Items {
+				if matchesANCModeName(item.Name, request.Mode) {
+					return item.StartCmdID, nil
+				}
+			}
+		}
+	}
+
+	legacyModes := map[string]int{
+		"off":          int(quicky.NoiseCancelOff),
+		"anc":          int(quicky.NoiseCancelANC),
+		"outdoor":      int(quicky.NoiseCancelOutdoor),
+		"transparency": int(quicky.NoiseCancelTransparency),
+	}
+	cmdID, ok := legacyModes[request.Mode]
+	if !ok {
+		return 0, errors.New("modo ANC inválido")
+	}
+	return cmdID, nil
+}
+
+func matchesANCModeName(productName, modeKey string) bool {
+	lower := strings.ToLower(strings.TrimSpace(productName))
+	switch modeKey {
+	case "off":
+		return lower == "normal" || lower == "off"
+	case "anc":
+		return strings.Contains(lower, "noise cancel") || lower == "anc"
+	case "transparency":
+		return strings.Contains(lower, "transparency")
+	case "outdoor":
+		return strings.Contains(lower, "outdoor") || strings.Contains(lower, "wind")
+	default:
+		return lower == strings.ToLower(strings.TrimSpace(modeKey))
+	}
+}
+
+func sendANCCommand(client *quicky.Client, prod *quicky.Product, request controlRequest) (int, error) {
+	cmdID, err := resolveANCCmdID(prod, request)
+	if err != nil {
+		return 0, err
+	}
+	if cmdID <= 0xFF {
+		return cmdID, client.SetNoiseCancelMode(quicky.NoiseCancelMode(cmdID))
+	}
+	mode := byte((cmdID >> 16) & 0xFF)
+	subScene := byte((cmdID >> 8) & 0xFF)
+	noiseValue := byte(cmdID & 0xFF)
+	return cmdID, client.SetANCSetting(mode, subScene, noiseValue)
 }
 
 func uniqueAddresses(addresses []string) []string {
