@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Murilo Scolari"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Controle de bateria e ANC para fones QCY via daemon local",
+        "Icon": "audio-headphones",
+        "Id": "me.muriloscolari.quicky",
+        "License": "MIT",
+        "Name": "QuiCkY QCY",
+        "Version": "0.1.0"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-MinimumVersion": "6.0"
+}

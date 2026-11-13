@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	defaultAddress = "127.0.0.1:8090"
-	controlName    = "control.json"
+	defaultAddress       = "127.0.0.1:8090"
+	defaultDaemonAddress = "127.0.0.1:47892"
+	controlName          = "control.json"
 )
 
 type controlInfo struct {
@@ -45,6 +46,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "serve":
 		return serveCommand(args[1:])
+	case "daemon":
+		return daemonCommand(args[1:])
 	case "start":
 		return startCommand(args[1:])
 	case "stop":
@@ -64,23 +67,38 @@ func run(args []string) error {
 }
 
 func serveCommand(args []string) error {
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	address := flags.String("addr", defaultAddress, "endereço HTTP local")
-	openBrowser := flags.Bool("open", true, "abrir a interface no navegador")
-	if err := flags.Parse(args); err != nil {
+	return serveWithDefaults("serve", defaultAddress, true, args)
+}
+
+func daemonCommand(args []string) error {
+	return serveWithDefaults("daemon", defaultDaemonAddress, false, args)
+}
+
+func serveWithDefaults(name, fallbackAddr string, fallbackOpen bool, args []string) error {
+	addr, openBrowser, err := parseServeFlags(name, fallbackAddr, fallbackOpen, args)
+	if err != nil {
 		return err
 	}
 
 	token := os.Getenv("QUICKY_CONTROL_TOKEN")
 	if token == "" {
-		var err error
 		token, err = newToken()
 		if err != nil {
 			return err
 		}
 	}
-	return serve(*address, *openBrowser, token, "")
+	return serve(addr, openBrowser, token, "")
+}
+
+func parseServeFlags(name, fallbackAddr string, fallbackOpen bool, args []string) (string, bool, error) {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	address := flags.String("addr", fallbackAddr, "endereço HTTP local")
+	openBrowser := flags.Bool("open", fallbackOpen, "abrir a interface no navegador")
+	if err := flags.Parse(args); err != nil {
+		return "", false, err
+	}
+	return *address, *openBrowser, nil
 }
 
 func startCommand(args []string) error {
@@ -431,9 +449,10 @@ Uso:
   quicky-control status            mostra URL, PID e log
   quicky-control logs [-f]         mostra os logs
   quicky-control serve [opções]    executa em primeiro plano
+  quicky-control daemon [opções]   executa como daemon (padrão 127.0.0.1:47892, sem navegador)
 
-Opções de start, restart e serve:
-  -addr 127.0.0.1:8090  endereço local da interface
+Opções de start, restart, serve e daemon:
+  -addr 127.0.0.1:8090  endereço local da interface (daemon: 127.0.0.1:47892)
   -open=true            abrir o navegador
 
 Sem comando, o comportamento é igual a "serve".

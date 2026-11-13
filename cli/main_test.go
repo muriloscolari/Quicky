@@ -29,3 +29,21 @@ func TestControlInfoRoundTrip(t *testing.T) {
 		t.Fatalf("readControl() = %+v, want %+v", got, want)
 	}
 }
+
+func TestParseServeFlags(t *testing.T) {
+	addr, open, err := parseServeFlags("daemon", defaultDaemonAddress, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "127.0.0.1:47892" || open {
+		t.Fatalf("daemon defaults = (%q, %v), want (127.0.0.1:47892, false)", addr, open)
+	}
+
+	addr, open, err = parseServeFlags("serve", defaultAddress, true, []string{"-addr", "127.0.0.1:49000", "-open=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr != "127.0.0.1:49000" || open {
+		t.Fatalf("serve override = (%q, %v), want (127.0.0.1:49000, false)", addr, open)
+	}
+}

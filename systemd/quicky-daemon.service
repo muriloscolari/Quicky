@@ -1,0 +1,12 @@
+[Unit]
+Description=QuiCkY QCY BLE Control Daemon
+After=bluetooth.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/quicky-control daemon -addr 127.0.0.1:47892
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
