@@ -9,7 +9,7 @@
         "Description": "Controle de bateria e ANC para fones QCY via daemon local",
         "Icon": "audio-headphones",
         "Id": "me.muriloscolari.quicky",
-        "License": "MIT",
+        "License": "GPL-2.0-only",
         "Name": "QuiCkY QCY",
         "ServiceTypes": [
             "Plasma/Applet"
