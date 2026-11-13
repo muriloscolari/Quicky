@@ -11,8 +11,13 @@
         "Id": "me.muriloscolari.quicky",
         "License": "MIT",
         "Name": "QuiCkY QCY",
+        "ServiceTypes": [
+            "Plasma/Applet"
+        ],
         "Version": "0.1.0"
     },
     "KPackageStructure": "Plasma/Applet",
-    "X-Plasma-API-MinimumVersion": "6.0"
+    "X-Plasma-API-MinimumVersion": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "X-Plasma-NotificationArea": "true"
 }
