@@ -59,3 +59,15 @@ function sendANC(baseUrl, cmdId, modeKey, callback) {
 function setAutoConnect(baseUrl, enabled, callback) {
     request(baseUrl, "POST", "/api/autoconnect", { enabled: enabled }, callback);
 }
+
+function setAutoSleep(baseUrl, enabled, callback) {
+    request(baseUrl, "POST", "/api/autosleep", { enabled: enabled }, callback);
+}
+
+function setSleepMode(baseUrl, enabled, callback) {
+    request(baseUrl, "POST", "/api/control", { action: "sleep", enabled: enabled }, callback);
+}
+
+function setLowLatency(baseUrl, enabled, callback) {
+    request(baseUrl, "POST", "/api/control", { action: "low_latency", enabled: enabled }, callback);
+}

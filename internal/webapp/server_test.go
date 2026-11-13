@@ -3,6 +3,7 @@ package webapp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -145,5 +146,51 @@ func TestAutoConnectEndpointAndPersistence(t *testing.T) {
 	reloaded := loadAutoConnect()
 	if reloaded.Enabled {
 		t.Fatalf("expected persisted autoConnect.Enabled = false")
+	}
+}
+
+func TestAutoSleepEndpointAndPersistence(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	app := newApp()
+	handler := app.routes(http.NotFoundHandler())
+
+	body := bytes.NewBufferString(`{"enabled":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/autosleep", body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got autoConnectState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AutoSleepOnConnect {
+		t.Fatalf("expected autoConnect.AutoSleepOnConnect = false")
+	}
+
+	reloaded := loadAutoConnect()
+	if reloaded.AutoSleepOnConnect {
+		t.Fatalf("expected persisted autoConnect.AutoSleepOnConnect = false")
+	}
+}
+
+func TestIsDisconnectedError(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{errors.New("Not connected"), true},
+		{errors.New("org.bluez.Error.NotConnected: Device is not connected"), true},
+		{errors.New("timeout waiting for notification"), false},
+	}
+
+	for _, tc := range cases {
+		if got := isDisconnectedError(tc.err); got != tc.want {
+			t.Fatalf("isDisconnectedError(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

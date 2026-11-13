@@ -88,10 +88,28 @@ Rectangle {
                 Layout.fillWidth: true
             }
             QQC2.Label {
-                visible: root.productModes && root.productModes.length > 0
-                text: "compatível"
+                text: "Ciclar ↻"
                 color: "#3daee9"
-                font.pixelSize: 10
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    enabled: !root.busy
+                    onClicked: {
+                        if (root.productModes && root.productModes.length > 0) {
+                            var idx = root.productModes.indexOf(root.activeMode);
+                            var next = root.productModes[(idx + 1) % root.productModes.length];
+                            root.selectANC(next.defaultcmd || next.startcmdid, "");
+                        } else {
+                            var order = ["anc", "transparency", "off"];
+                            var nextKey = order[0];
+                            if (root.currentCmdId === 1) nextKey = "transparency";
+                            else if (root.currentCmdId === 3) nextKey = "off";
+                            root.selectANC(null, nextKey);
+                        }
+                    }
+                }
             }
         }
 

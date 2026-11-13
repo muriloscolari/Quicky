@@ -67,6 +67,8 @@ type connectionState struct {
 	Battery          *batteryState  `json:"battery,omitempty"`
 	Firmware         *firmwareState `json:"firmware,omitempty"`
 	ANC              *ancState      `json:"anc,omitempty"`
+	SleepMode        bool           `json:"sleepMode,omitempty"`
+	LowLatency       bool           `json:"lowLatency,omitempty"`
 	AudioAddress     string         `json:"audioAddress,omitempty"`
 	AudioReconnected bool           `json:"audioReconnected,omitempty"`
 	Warning          string         `json:"warning,omitempty"`
@@ -74,9 +76,10 @@ type connectionState struct {
 }
 
 type autoConnectState struct {
-	Enabled     bool   `json:"enabled"`
-	LastAddress string `json:"lastAddress,omitempty"`
-	Paused      bool   `json:"paused,omitempty"`
+	Enabled            bool   `json:"enabled"`
+	LastAddress        string `json:"lastAddress,omitempty"`
+	Paused             bool   `json:"paused,omitempty"`
+	AutoSleepOnConnect bool   `json:"autoSleepOnConnect"`
 }
 
 type autoConnectRequest struct {
@@ -191,6 +194,7 @@ func (a *appState) routes(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/refresh", a.handleRefresh)
 	mux.HandleFunc("POST /api/control", a.handleControl)
 	mux.HandleFunc("POST /api/autoconnect", a.handleAutoConnect)
+	mux.HandleFunc("POST /api/autosleep", a.handleAutoSleep)
 	mux.HandleFunc("POST /api/shutdown", a.handleShutdown)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -403,6 +407,15 @@ func (a *appState) connectAddresses(parentCtx context.Context, addresses []strin
 			connection.Firmware = &firmwareState{Left: version.Left, Right: version.Right}
 		}
 
+		a.mu.RLock()
+		autoSleep := a.autoConnect.AutoSleepOnConnect
+		a.mu.RUnlock()
+		if autoSleep {
+			if sleepErr := client.SetSleepMode(true); sleepErr == nil {
+				connection.SleepMode = true
+			}
+		}
+
 		a.mu.Lock()
 		a.client = client
 		a.connection = connection
@@ -462,6 +475,40 @@ func (a *appState) handleAutoConnect(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, state)
 }
 
+func (a *appState) handleAutoSleep(w http.ResponseWriter, r *http.Request) {
+	var request autoConnectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "campo enabled é obrigatório")
+		return
+	}
+
+	a.mu.Lock()
+	a.autoConnect.AutoSleepOnConnect = *request.Enabled
+	state := a.autoConnect
+	state.Paused = a.autoConnectPaused
+	client := a.client
+	connected := a.connection.Connected
+	a.mu.Unlock()
+	saveAutoConnect(state)
+
+	if *request.Enabled && connected && client != nil {
+		a.deviceMu.Lock()
+		if err := client.SetSleepMode(true); err == nil {
+			a.mu.Lock()
+			if a.client == client {
+				a.connection.SleepMode = true
+			}
+			a.mu.Unlock()
+		}
+		a.deviceMu.Unlock()
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
 func (a *appState) handleRefresh(w http.ResponseWriter, _ *http.Request) {
 	a.deviceMu.Lock()
 	defer a.deviceMu.Unlock()
@@ -473,6 +520,9 @@ func (a *appState) handleRefresh(w http.ResponseWriter, _ *http.Request) {
 
 	battery, err := client.ReadBattery()
 	if err != nil {
+		if isDisconnectedError(err) {
+			_ = a.disconnectCurrent()
+		}
 		writeError(w, http.StatusBadGateway, friendlyBluetoothError(err))
 		return
 	}
@@ -524,6 +574,13 @@ func (a *appState) handleControl(w http.ResponseWriter, r *http.Request) {
 		}
 	case "low_latency":
 		err = withBool(request.Enabled, client.SetLowLatency)
+		if err == nil && request.Enabled != nil {
+			a.mu.Lock()
+			if a.client == client {
+				a.connection.LowLatency = *request.Enabled
+			}
+			a.mu.Unlock()
+		}
 	case "in_ear":
 		err = withBool(request.Enabled, client.SetInEarDetection)
 	case "spatial_audio":
@@ -532,6 +589,13 @@ func (a *appState) handleControl(w http.ResponseWriter, r *http.Request) {
 		err = withBool(request.Enabled, client.SetLDAC)
 	case "sleep":
 		err = withBool(request.Enabled, client.SetSleepMode)
+		if err == nil && request.Enabled != nil {
+			a.mu.Lock()
+			if a.client == client {
+				a.connection.SleepMode = *request.Enabled
+			}
+			a.mu.Unlock()
+		}
 	case "volume":
 		if err = validateRange(request.Left, "volume esquerdo", 0, 100); err == nil {
 			if err = validateRange(request.Right, "volume direito", 0, 100); err == nil {
@@ -558,6 +622,9 @@ func (a *appState) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		if isDisconnectedError(err) {
+			_ = a.disconnectCurrent()
+		}
 		writeError(w, http.StatusBadRequest, friendlyBluetoothError(err))
 		return
 	}
@@ -839,8 +906,18 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+func isDisconnectedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "not connected") ||
+		strings.Contains(lower, "disconnected") ||
+		strings.Contains(lower, "no such device")
+}
+
 func (a *appState) autoConnectLoop() {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -848,8 +925,25 @@ func (a *appState) autoConnectLoop() {
 		case <-a.shutdown:
 			return
 		case <-ticker.C:
+			a.verifyConnectionHealth()
 			a.tryAutoConnect()
 		}
+	}
+}
+
+func (a *appState) verifyConnectionHealth() {
+	a.mu.RLock()
+	connected := a.connection.Connected
+	address := a.connection.Address
+	a.mu.RUnlock()
+	if !connected || address == "" {
+		return
+	}
+
+	if stillUp, err := bluez.DeviceConnected(address); err == nil && !stillUp {
+		a.deviceMu.Lock()
+		_ = a.disconnectCurrent()
+		a.deviceMu.Unlock()
 	}
 }
 
@@ -886,7 +980,7 @@ func autoConnectPath() (string, error) {
 }
 
 func loadAutoConnect() autoConnectState {
-	state := autoConnectState{Enabled: true}
+	state := autoConnectState{Enabled: true, AutoSleepOnConnect: true}
 	path, err := autoConnectPath()
 	if err != nil {
 		return state

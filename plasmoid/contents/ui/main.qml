@@ -18,7 +18,7 @@ PlasmoidItem {
     property string errorMessage: ""
     property var devices: []
     property var connection: ({ connected: false })
-    property var autoConnect: ({ enabled: true, lastAddress: "", paused: false })
+    property var autoConnect: ({ enabled: true, lastAddress: "", paused: false, autoSleepOnConnect: true })
     property int localAncCmdId: -1
 
     readonly property bool isConnected: Boolean(connection && connection.connected)
@@ -132,8 +132,8 @@ PlasmoidItem {
 
     fullRepresentation: Rectangle {
         id: popupRoot
-        implicitWidth: 360
-        implicitHeight: Math.min(540, Math.max(260, contentCol.implicitHeight + 28))
+        implicitWidth: 365
+        implicitHeight: Math.min(620, Math.max(280, contentCol.implicitHeight + 28))
         Layout.minimumWidth: 340
         Layout.minimumHeight: 240
         color: "#1b1e20"
@@ -302,6 +302,110 @@ PlasmoidItem {
                         });
                     }
                 }
+
+                // Controles de toque e áudio
+                Rectangle {
+                    Layout.fillWidth: true
+                    radius: 10
+                    color: "#232629"
+                    border.width: 1
+                    border.color: "#31363b"
+                    implicitHeight: touchAudioCol.implicitHeight + 18
+
+                    ColumnLayout {
+                        id: touchAudioCol
+                        anchors.fill: parent
+                        anchors.margins: 9
+                        spacing: 8
+
+                        QQC2.Label {
+                            text: "TOQUE & ÁUDIO"
+                            color: "#9ea7b0"
+                            font.pixelSize: 10
+                            font.weight: Font.Bold
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                QQC2.Label {
+                                    text: "Ignorar toques (Modo Sono)"
+                                    color: "#eff0f1"
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                                QQC2.Label {
+                                    text: "Desativa os comandos de toque na lateral do fone"
+                                    color: "#9ea7b0"
+                                    font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            QQC2.Switch {
+                                enabled: !root.busyAction
+                                checked: Boolean(root.connection.sleepMode)
+                                onToggled: {
+                                    root.busyAction = true;
+                                    root.errorMessage = "";
+                                    ApiClient.setSleepMode(root.daemonUrl, checked, function(err) {
+                                        root.busyAction = false;
+                                        if (err) root.errorMessage = err;
+                                        root.pollStatus();
+                                    });
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: "#31363b"
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                QQC2.Label {
+                                    text: "Modo Jogo (Baixa latência)"
+                                    color: "#eff0f1"
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                                QQC2.Label {
+                                    text: "Reduz o atraso de áudio para jogos e vídeos"
+                                    color: "#9ea7b0"
+                                    font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            QQC2.Switch {
+                                enabled: !root.busyAction
+                                checked: Boolean(root.connection.lowLatency)
+                                onToggled: {
+                                    root.busyAction = true;
+                                    root.errorMessage = "";
+                                    ApiClient.setLowLatency(root.daemonUrl, checked, function(err) {
+                                        root.busyAction = false;
+                                        if (err) root.errorMessage = err;
+                                        root.pollStatus();
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Painel quando DESCONECTADO: Scan e Lista
@@ -405,7 +509,7 @@ PlasmoidItem {
                 }
             }
 
-            // Preferência de auto-conexão
+            // Preferências persistentes
             Rectangle {
                 visible: root.daemonOnline
                 Layout.fillWidth: true
@@ -413,43 +517,87 @@ PlasmoidItem {
                 color: "#232629"
                 border.width: 1
                 border.color: "#31363b"
-                implicitHeight: autoRow.implicitHeight + 14
+                implicitHeight: prefsCol.implicitHeight + 14
 
-                RowLayout {
-                    id: autoRow
+                ColumnLayout {
+                    id: prefsCol
                     anchors.fill: parent
                     anchors.margins: 7
-                    spacing: 8
+                    spacing: 6
 
-                    ColumnLayout {
+                    RowLayout {
                         Layout.fillWidth: true
-                        spacing: 1
-                        QQC2.Label {
-                            text: "Auto-conectar ao ligar"
-                            color: "#eff0f1"
-                            font.pixelSize: 11
-                            font.weight: Font.DemiBold
-                        }
-                        QQC2.Label {
-                            text: root.autoConnect.paused
-                                ? "Pausado após desconexão manual"
-                                : (root.autoConnect.lastAddress
-                                    ? ("Último: " + root.autoConnect.lastAddress)
-                                    : "Aguardando primeira conexão")
-                            color: "#9ea7b0"
-                            font.pixelSize: 10
-                            elide: Text.ElideRight
+                        spacing: 8
+
+                        ColumnLayout {
                             Layout.fillWidth: true
+                            spacing: 1
+                            QQC2.Label {
+                                text: "Auto-conectar ao ligar"
+                                color: "#eff0f1"
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                            QQC2.Label {
+                                text: root.autoConnect.paused
+                                    ? "Pausado após desconexão manual"
+                                    : (root.autoConnect.lastAddress
+                                        ? ("Último: " + root.autoConnect.lastAddress)
+                                        : "Aguardando primeira conexão")
+                                color: "#9ea7b0"
+                                font.pixelSize: 10
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        QQC2.Switch {
+                            checked: Boolean(root.autoConnect.enabled)
+                            onToggled: {
+                                ApiClient.setAutoConnect(root.daemonUrl, checked, function(err) {
+                                    if (err) root.errorMessage = err;
+                                    root.pollStatus();
+                                });
+                            }
                         }
                     }
 
-                    QQC2.Switch {
-                        checked: Boolean(root.autoConnect.enabled)
-                        onToggled: {
-                            ApiClient.setAutoConnect(root.daemonUrl, checked, function(err) {
-                                if (err) root.errorMessage = err;
-                                root.pollStatus();
-                            });
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: "#31363b"
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            QQC2.Label {
+                                text: "Bloquear toques ao conectar"
+                                color: "#eff0f1"
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                            QQC2.Label {
+                                text: "Ativa Modo Sono automaticamente ao conectar"
+                                color: "#9ea7b0"
+                                font.pixelSize: 10
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        QQC2.Switch {
+                            checked: Boolean(root.autoConnect.autoSleepOnConnect)
+                            onToggled: {
+                                ApiClient.setAutoSleep(root.daemonUrl, checked, function(err) {
+                                    if (err) root.errorMessage = err;
+                                    root.pollStatus();
+                                });
+                            }
                         }
                     }
                 }
