@@ -89,28 +89,39 @@ PlasmoidItem {
 
     compactRepresentation: MouseArea {
         id: compactRoot
-        implicitWidth: compactRow.implicitWidth + 8
-        implicitHeight: compactRow.implicitHeight + 4
+        implicitWidth: Kirigami.Units.iconSizes.medium
+        implicitHeight: Kirigami.Units.iconSizes.medium
+        Layout.minimumWidth: Kirigami.Units.iconSizes.small
+        Layout.minimumHeight: Kirigami.Units.iconSizes.small
+        Layout.preferredWidth: height
+        Layout.maximumWidth: height
         onClicked: root.expanded = !root.expanded
 
-        RowLayout {
-            id: compactRow
+        Kirigami.Icon {
             anchors.centerIn: parent
-            spacing: 4
+            anchors.verticalCenterOffset: (root.isConnected && root.minEarbudBattery >= 0) ? -2 : 0
+            source: "audio-headphones"
+            width: Math.min(parent.width, parent.height) - 2
+            height: width
+            color: root.isConnected ? "#3daee9" : (root.daemonOnline ? Kirigami.Theme.textColor : "#7f8c8d")
+        }
 
-            Kirigami.Icon {
-                source: "audio-headphones"
-                implicitWidth: Kirigami.Units.iconSizes.smallMedium
-                implicitHeight: Kirigami.Units.iconSizes.smallMedium
-                color: root.isConnected ? "#3daee9" : (root.daemonOnline ? Kirigami.Theme.textColor : "#7f8c8d")
-            }
+        // Barra sutil de bateria na base do ícone (sem alargar o slot da bandeja)
+        Rectangle {
+            visible: root.isConnected && root.minEarbudBattery >= 0
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottomMargin: 1
+            width: Math.max(12, parent.width - 6)
+            height: 3
+            radius: 1.5
+            color: "#1b1e20"
 
-            QQC2.Label {
-                visible: root.isConnected && root.minEarbudBattery >= 0
-                text: root.minEarbudBattery + "%"
-                font.pixelSize: 11
-                font.weight: Font.Bold
-                color: root.minEarbudBattery <= 20 ? "#da4453" : "#eff0f1"
+            Rectangle {
+                height: parent.height
+                radius: 1.5
+                width: Math.max(2, Math.min(1, root.minEarbudBattery / 100) * parent.width)
+                color: root.minEarbudBattery <= 15 ? "#da4453" : (root.minEarbudBattery <= 25 ? "#f39c12" : "#27ae60")
             }
         }
     }
