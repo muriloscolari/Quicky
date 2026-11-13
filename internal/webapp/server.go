@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -71,27 +73,40 @@ type connectionState struct {
 	Since            time.Time      `json:"since,omitempty"`
 }
 
+type autoConnectState struct {
+	Enabled     bool   `json:"enabled"`
+	LastAddress string `json:"lastAddress,omitempty"`
+	Paused      bool   `json:"paused,omitempty"`
+}
+
+type autoConnectRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
 type appState struct {
-	mu           sync.RWMutex
-	deviceMu     sync.Mutex
-	scanner      *quicky.Scanner
-	devices      map[string]scannedDevice
-	scanning     bool
-	connecting   bool
-	lastError    string
-	client       *quicky.Client
-	connection   connectionState
-	controlToken string
-	shutdown     chan struct{}
-	shutdownOnce sync.Once
+	mu                sync.RWMutex
+	deviceMu          sync.Mutex
+	scanner           *quicky.Scanner
+	devices           map[string]scannedDevice
+	scanning          bool
+	connecting        bool
+	lastError         string
+	client            *quicky.Client
+	connection        connectionState
+	autoConnect       autoConnectState
+	autoConnectPaused bool
+	controlToken      string
+	shutdown          chan struct{}
+	shutdownOnce      sync.Once
 }
 
 type statusResponse struct {
-	Scanning   bool            `json:"scanning"`
-	Connecting bool            `json:"connecting"`
-	LastError  string          `json:"lastError,omitempty"`
-	Devices    []scannedDevice `json:"devices"`
-	Connection connectionState `json:"connection"`
+	Scanning    bool             `json:"scanning"`
+	Connecting  bool             `json:"connecting"`
+	LastError   string           `json:"lastError,omitempty"`
+	Devices     []scannedDevice  `json:"devices"`
+	Connection  connectionState  `json:"connection"`
+	AutoConnect autoConnectState `json:"autoConnect"`
 }
 
 type connectRequest struct {
@@ -134,11 +149,19 @@ func newApp(controlToken ...string) *appState {
 	if len(controlToken) > 0 {
 		token = controlToken[0]
 	}
-	return &appState{
+	app := &appState{
 		devices:      make(map[string]scannedDevice),
+		autoConnect:  loadAutoConnect(),
 		controlToken: token,
 		shutdown:     make(chan struct{}),
 	}
+	return app
+}
+
+// StartAutoConnect starts periodic lightweight BLE discovery to reconnect
+// the last paired QCY earphone when it powers on nearby.
+func (s *Server) StartAutoConnect() {
+	go s.app.autoConnectLoop()
 }
 
 // Handler returns the complete API and static frontend handler.
@@ -167,6 +190,7 @@ func (a *appState) routes(static http.Handler) http.Handler {
 	mux.HandleFunc("POST /api/disconnect", a.handleDisconnect)
 	mux.HandleFunc("POST /api/refresh", a.handleRefresh)
 	mux.HandleFunc("POST /api/control", a.handleControl)
+	mux.HandleFunc("POST /api/autoconnect", a.handleAutoConnect)
 	mux.HandleFunc("POST /api/shutdown", a.handleShutdown)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -193,12 +217,15 @@ func (a *appState) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	for _, device := range a.devices {
 		devices = append(devices, device)
 	}
+	autoConnect := a.autoConnect
+	autoConnect.Paused = a.autoConnectPaused
 	response := statusResponse{
-		Scanning:   a.scanning,
-		Connecting: a.connecting,
-		LastError:  a.lastError,
-		Devices:    devices,
-		Connection: a.connection,
+		Scanning:    a.scanning,
+		Connecting:  a.connecting,
+		LastError:   a.lastError,
+		Devices:     devices,
+		Connection:  a.connection,
+		AutoConnect: autoConnect,
 	}
 	a.mu.RUnlock()
 
@@ -298,12 +325,20 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	connection, status, err := a.connectAddresses(r.Context(), addresses)
+	if err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, connection)
+}
+
+func (a *appState) connectAddresses(parentCtx context.Context, addresses []string) (connectionState, int, error) {
 	a.stopScan()
 	a.mu.Lock()
 	if a.connecting {
 		a.mu.Unlock()
-		writeError(w, http.StatusConflict, "uma conexão já está em andamento")
-		return
+		return connectionState{}, http.StatusConflict, errors.New("uma conexão já está em andamento")
 	}
 	a.connecting = true
 	a.lastError = ""
@@ -337,7 +372,7 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
 		err = client.Connect(ctx)
 		cancel()
 		if err != nil {
@@ -372,10 +407,13 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 		a.client = client
 		a.connection = connection
 		a.lastError = ""
+		a.autoConnectPaused = false
+		a.autoConnect.LastAddress = address
+		cfg := a.autoConnect
 		a.mu.Unlock()
+		saveAutoConnect(cfg)
 		go a.listenEvents(client)
-		writeJSON(w, http.StatusOK, connection)
-		return
+		return connection, http.StatusOK, nil
 	}
 
 	err := errors.New(strings.Join(connectionErrors, "; "))
@@ -383,10 +421,14 @@ func (a *appState) handleConnect(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	a.lastError = message
 	a.mu.Unlock()
-	writeError(w, http.StatusBadGateway, message)
+	return connectionState{}, http.StatusBadGateway, errors.New(message)
 }
 
 func (a *appState) handleDisconnect(w http.ResponseWriter, _ *http.Request) {
+	a.mu.Lock()
+	a.autoConnectPaused = true
+	a.mu.Unlock()
+
 	a.deviceMu.Lock()
 	err := a.disconnectCurrent()
 	a.deviceMu.Unlock()
@@ -395,6 +437,29 @@ func (a *appState) handleDisconnect(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"disconnected": true})
+}
+
+func (a *appState) handleAutoConnect(w http.ResponseWriter, r *http.Request) {
+	var request autoConnectRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "campo enabled é obrigatório")
+		return
+	}
+
+	a.mu.Lock()
+	a.autoConnect.Enabled = *request.Enabled
+	if *request.Enabled {
+		a.autoConnectPaused = false
+	}
+	state := a.autoConnect
+	state.Paused = a.autoConnectPaused
+	a.mu.Unlock()
+	saveAutoConnect(state)
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (a *appState) handleRefresh(w http.ResponseWriter, _ *http.Request) {
@@ -772,4 +837,80 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (a *appState) autoConnectLoop() {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.shutdown:
+			return
+		case <-ticker.C:
+			a.tryAutoConnect()
+		}
+	}
+}
+
+func (a *appState) tryAutoConnect() {
+	a.mu.Lock()
+	if !a.autoConnect.Enabled || a.autoConnectPaused || a.autoConnect.LastAddress == "" ||
+		a.scanning || a.connecting || a.connection.Connected {
+		a.mu.Unlock()
+		return
+	}
+	target := a.autoConnect.LastAddress
+	scanner := quicky.NewScanner()
+	a.scanner = scanner
+	a.scanning = true
+	a.mu.Unlock()
+
+	a.scan(scanner, 5*time.Second)
+
+	if dev := a.findDevice([]string{target}); dev != nil {
+		_, _, _ = a.connectAddresses(context.Background(), []string{target})
+	}
+}
+
+func autoConnectPath() (string, error) {
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		stateHome = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(stateHome, "quicky", "autoconnect.json"), nil
+}
+
+func loadAutoConnect() autoConnectState {
+	state := autoConnectState{Enabled: true}
+	path, err := autoConnectPath()
+	if err != nil {
+		return state
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return state
+	}
+	_ = json.Unmarshal(data, &state)
+	return state
+}
+
+func saveAutoConnect(state autoConnectState) {
+	path, err := autoConnectPath()
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	state.Paused = false
+	data, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o600)
 }

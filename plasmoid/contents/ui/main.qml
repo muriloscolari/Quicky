@@ -18,6 +18,7 @@ PlasmoidItem {
     property string errorMessage: ""
     property var devices: []
     property var connection: ({ connected: false })
+    property var autoConnect: ({ enabled: true, lastAddress: "", paused: false })
     property int localAncCmdId: -1
 
     readonly property bool isConnected: Boolean(connection && connection.connected)
@@ -56,6 +57,9 @@ PlasmoidItem {
         connecting = Boolean(status.connecting);
         devices = status.devices || [];
         connection = status.connection || { connected: false };
+        if (status.autoConnect) {
+            autoConnect = status.autoConnect;
+        }
         if (connection && connection.anc && typeof connection.anc.cmdId === "number") {
             localAncCmdId = connection.anc.cmdId;
         } else if (!isConnected) {
@@ -396,6 +400,56 @@ PlasmoidItem {
                                     });
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            // Preferência de auto-conexão
+            Rectangle {
+                visible: root.daemonOnline
+                Layout.fillWidth: true
+                radius: 9
+                color: "#232629"
+                border.width: 1
+                border.color: "#31363b"
+                implicitHeight: autoRow.implicitHeight + 14
+
+                RowLayout {
+                    id: autoRow
+                    anchors.fill: parent
+                    anchors.margins: 7
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 1
+                        QQC2.Label {
+                            text: "Auto-conectar ao ligar"
+                            color: "#eff0f1"
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                        }
+                        QQC2.Label {
+                            text: root.autoConnect.paused
+                                ? "Pausado após desconexão manual"
+                                : (root.autoConnect.lastAddress
+                                    ? ("Último: " + root.autoConnect.lastAddress)
+                                    : "Aguardando primeira conexão")
+                            color: "#9ea7b0"
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                    }
+
+                    QQC2.Switch {
+                        checked: Boolean(root.autoConnect.enabled)
+                        onToggled: {
+                            ApiClient.setAutoConnect(root.daemonUrl, checked, function(err) {
+                                if (err) root.errorMessage = err;
+                                root.pollStatus();
+                            });
                         }
                     }
                 }

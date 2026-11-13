@@ -55,3 +55,7 @@ function sendANC(baseUrl, cmdId, modeKey, callback) {
         : { action: "anc", mode: modeKey };
     request(baseUrl, "POST", "/api/control", payload, callback);
 }
+
+function setAutoConnect(baseUrl, enabled, callback) {
+    request(baseUrl, "POST", "/api/autoconnect", { enabled: enabled }, callback);
+}

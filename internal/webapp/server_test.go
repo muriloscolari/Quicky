@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -116,5 +117,33 @@ func TestBatteryFromAdvertisement(t *testing.T) {
 	})
 	if got == nil || got.Left != 82 || got.Right != 81 || got.Case != 0 || !got.LeftCharging {
 		t.Fatalf("unexpected battery fallback: %+v", got)
+	}
+}
+
+func TestAutoConnectEndpointAndPersistence(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	app := newApp()
+	handler := app.routes(http.NotFoundHandler())
+
+	body := bytes.NewBufferString(`{"enabled":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/autoconnect", body)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got autoConnectState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled {
+		t.Fatalf("expected autoConnect.Enabled = false")
+	}
+
+	reloaded := loadAutoConnect()
+	if reloaded.Enabled {
+		t.Fatalf("expected persisted autoConnect.Enabled = false")
 	}
 }

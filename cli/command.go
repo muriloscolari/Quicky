@@ -289,6 +289,7 @@ func serve(address string, openBrowser bool, token, logPath string) error {
 	if err != nil {
 		return err
 	}
+	panel.StartAutoConnect()
 	server := &http.Server{
 		Handler:           panel.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
